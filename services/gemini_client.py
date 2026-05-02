@@ -20,7 +20,7 @@ def get_api_key(st) -> str | None:
 def generate_with_gemini(
     api_key: str,
     prompt: str,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash-lite",
 ) -> GeminiResult:
     try:
         from google import genai
