@@ -8,7 +8,8 @@ from pathlib import Path
 import streamlit as st
 
 from modules.subjects import profile_for
-from services.document_loader import LoadedDocument, load_uploaded_documents
+from services.document_loader import load_uploaded_documents
+from services.docx_export import build_practice_docx
 from services.gemini_client import build_subject_context, generate_with_gemini, get_api_key
 from services.rag_index import StudyIndex, format_context
 from services.schedule import exams_for_subject, load_exams, subjects_from_exams, upcoming_exams
@@ -132,6 +133,37 @@ def split_generated_questions(text: str) -> list[str]:
     return questions
 
 
+def split_past_paper_questions(text: str) -> list[str]:
+    pattern = re.compile(
+        r"(?im)^\s*(?:question\s+|q\s*)?(\d{1,2})\s*(?:[.)]|[a-z]\)|\s{2,})"
+    )
+    matches = list(pattern.finditer(text))
+    questions: list[str] = []
+
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        block = text[start:end].strip()
+        if len(block.split()) >= 12:
+            questions.append(block)
+
+    if questions:
+        return questions[:30]
+
+    words = text.split()
+    fallback: list[str] = []
+    for start in range(0, len(words), 220):
+        block = " ".join(words[start : start + 220]).strip()
+        if block:
+            fallback.append(block)
+    return fallback[:12]
+
+
+def filename_slug(text: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")
+    return slug or "practice"
+
+
 def dashboard_tab(exams) -> None:
     st.subheader("Upcoming papers")
     st.write("The schedule below is seeded from Maximos's individual exam programme.")
@@ -241,16 +273,59 @@ For each question include:
 
     if st.session_state.latest_practice:
         st.markdown(st.session_state.latest_practice)
+        try:
+            docx_bytes = build_practice_docx(
+                subject,
+                f"{exam.component} | {exam.board} {exam.level} {exam.unit_code}",
+                st.session_state.latest_practice,
+            )
+            st.download_button(
+                "Download generated practice as DOCX",
+                data=docx_bytes,
+                file_name=f"{filename_slug(subject)}-practice.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        except RuntimeError as exc:
+            st.warning(str(exc))
         st.download_button(
-            "Download generated practice",
+            "Download generated practice as Markdown",
             data=st.session_state.latest_practice,
-            file_name=f"{subject.lower().replace(' ', '-')}-practice.txt",
-            mime="text/plain",
+            file_name=f"{filename_slug(subject)}-practice.md",
+            mime="text/markdown",
         )
 
 
 def feedback_tab(subject: str, exam) -> None:
     st.subheader("Mark an answer")
+
+    past_papers = [
+        doc
+        for doc in st.session_state.documents
+        if doc.subject == subject and doc.document_type == "Past paper"
+    ]
+    if past_papers:
+        with st.expander("Choose a question from an uploaded past paper"):
+            paper_names = [doc.name for doc in past_papers]
+            selected_paper_name = st.selectbox("Past paper", paper_names)
+            selected_paper = past_papers[paper_names.index(selected_paper_name)]
+            paper_questions = split_past_paper_questions(selected_paper.text)
+
+            if paper_questions:
+                paper_question_labels = [
+                    f"Extract {index + 1}: {question[:80].replace(chr(10), ' ')}"
+                    for index, question in enumerate(paper_questions)
+                ]
+                selected_paper_question = st.selectbox(
+                    "Question/extract",
+                    paper_question_labels,
+                )
+                paper_question_index = paper_question_labels.index(selected_paper_question)
+                with st.container(border=True):
+                    st.write(paper_questions[paper_question_index])
+                if st.button("Use selected past-paper question"):
+                    st.session_state.feedback_question = paper_questions[paper_question_index]
+            else:
+                st.info("No extractable questions were found in this past paper.")
 
     if st.session_state.latest_practice_questions:
         question_labels = [
@@ -326,7 +401,7 @@ def progress_tab(subject: str) -> None:
     total_minutes = sum(item["minutes"] for item in subject_log)
     st.metric("Logged minutes for this subject", total_minutes)
     for item in subject_log[:8]:
-        st.write(f"**{item['date']}** · {item['minutes']} min · {item['confidence']} confidence")
+        st.write(f"**{item['date']}** - {item['minutes']} min - {item['confidence']} confidence")
         st.caption(item["notes"])
 
 
