@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -34,6 +35,10 @@ def init_state() -> None:
     st.session_state.setdefault("documents", [])
     st.session_state.setdefault("study_index", StudyIndex([]))
     st.session_state.setdefault("study_log", [])
+    st.session_state.setdefault("latest_practice", "")
+    st.session_state.setdefault("latest_practice_questions", [])
+    st.session_state.setdefault("feedback_question", "")
+    st.session_state.setdefault("feedback_answer", "")
 
 
 def rebuild_index() -> None:
@@ -107,6 +112,24 @@ def run_gemini(prompt: str) -> str:
         return generate_with_gemini(api_key, prompt).text
     except Exception as exc:
         return f"Gemini request failed: {exc}"
+
+
+def split_generated_questions(text: str) -> list[str]:
+    pattern = re.compile(
+        r"(?im)^\s*(?:#{1,4}\s*)?(?:question|q)\s*(\d+)\s*[:.)-]?\s*"
+    )
+    matches = list(pattern.finditer(text))
+    if not matches:
+        return [text.strip()] if text.strip() else []
+
+    questions: list[str] = []
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        block = text[start:end].strip()
+        if block:
+            questions.append(block)
+    return questions
 
 
 def dashboard_tab(exams) -> None:
@@ -211,13 +234,46 @@ For each question include:
 4. Mark scheme points
 5. One common mistake
 """
-        st.markdown(run_gemini(prompt))
+        st.session_state.latest_practice = run_gemini(prompt)
+        st.session_state.latest_practice_questions = split_generated_questions(
+            st.session_state.latest_practice
+        )
+
+    if st.session_state.latest_practice:
+        st.markdown(st.session_state.latest_practice)
+        st.download_button(
+            "Download generated practice",
+            data=st.session_state.latest_practice,
+            file_name=f"{subject.lower().replace(' ', '-')}-practice.txt",
+            mime="text/plain",
+        )
 
 
 def feedback_tab(subject: str, exam) -> None:
     st.subheader("Mark an answer")
-    question = st.text_area("Question", height=120)
-    answer = st.text_area("Maximos's answer", height=180)
+
+    if st.session_state.latest_practice_questions:
+        question_labels = [
+            f"Question {index + 1}"
+            for index, _ in enumerate(st.session_state.latest_practice_questions)
+        ]
+        selected_question = st.selectbox(
+            "Generated question to answer",
+            question_labels,
+        )
+        selected_index = question_labels.index(selected_question)
+        with st.expander("Preview selected generated question", expanded=True):
+            st.markdown(st.session_state.latest_practice_questions[selected_index])
+        if st.button("Use selected generated question"):
+            st.session_state.feedback_question = st.session_state.latest_practice_questions[
+                selected_index
+            ]
+    elif st.session_state.latest_practice:
+        if st.button("Use latest generated practice as the question"):
+            st.session_state.feedback_question = st.session_state.latest_practice
+
+    question = st.text_area("Question", height=260, key="feedback_question")
+    answer = st.text_area("Maximos's answer", height=220, key="feedback_answer")
 
     if st.button("Get feedback"):
         query = f"{subject} {exam.component} mark scheme {question}"
