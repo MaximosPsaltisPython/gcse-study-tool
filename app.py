@@ -117,7 +117,7 @@ def run_gemini(prompt: str) -> str:
 
 def split_generated_questions(text: str) -> list[str]:
     pattern = re.compile(
-        r"(?im)^\s*(?:#{1,4}\s*)?(?:question|q)\s*(\d+)\s*[:.)-]?\s*"
+        r"(?im)^\s*(?:#{1,4}\s*)?(?:practice\s+)?(?:question|q)\s*(\d+)\s*[:.)-]?\s*"
     )
     matches = list(pattern.finditer(text))
     if not matches:
@@ -395,11 +395,23 @@ Topic: {topic}
 Difficulty: {difficulty}
 
 For each question include:
-1. Marks available
-2. Question
-3. Model answer
-4. Mark scheme points
-5. One common mistake
+Use this exact structure for each question:
+
+Question 1
+Marks available:
+Question:
+Model answer:
+Mark scheme points:
+Common mistake:
+
+Question 2
+Marks available:
+Question:
+Model answer:
+Mark scheme points:
+Common mistake:
+
+Continue the same structure until all {count} questions are complete.
 """
         st.session_state.latest_practice = run_gemini(prompt)
         st.session_state.latest_practice_questions = split_generated_questions(
