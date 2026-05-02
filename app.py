@@ -133,7 +133,107 @@ def split_generated_questions(text: str) -> list[str]:
     return questions
 
 
-def split_past_paper_questions(text: str) -> list[str]:
+def clean_exam_text(text: str) -> str:
+    noise_patterns = [
+        r"DO NOT WRITE IN THIS AREA",
+        r"Turn over",
+        r"\*P\d+[A-Z]?\d*\*",
+        r"\bPearson Edexcel\b",
+        r"\bInternational GCSE\b",
+        r"\bInstructions?\b.*",
+        r"\bAnswer ALL questions\b",
+        r"\bTotal Marks\b.*",
+        r"\bQuestions? \d+.*",
+    ]
+    cleaned = text
+    for pattern in noise_patterns:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\.{8,}", "\n", cleaned)
+    cleaned = re.sub(r"_{8,}", "\n", cleaned)
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def infer_year_from_filename(filename: str) -> str:
+    match = re.search(r"(20\d{2})", filename)
+    return match.group(1) if match else "Unknown year"
+
+
+def split_past_paper_questions(text: str, filename: str) -> list[dict[str, str]]:
+    page_pattern = re.compile(r"(?m)^\s*\[Page (\d+)\]\s*$")
+    page_matches = list(page_pattern.finditer(text))
+    year = infer_year_from_filename(filename)
+    extracts: list[dict[str, str]] = []
+
+    page_blocks: list[tuple[str, str]] = []
+    for index, match in enumerate(page_matches):
+        page = match.group(1)
+        start = match.end()
+        end = page_matches[index + 1].start() if index + 1 < len(page_matches) else len(text)
+        page_blocks.append((page, text[start:end]))
+
+    if not page_blocks:
+        page_blocks = [("?", text)]
+
+    question_pattern = re.compile(
+        r"(?im)^\s*(?:question\s+|q\s*)?(\d{1,2})\s*(?:[.)]|\s{2,})"
+    )
+
+    for page, page_text in page_blocks:
+        matches = list(question_pattern.finditer(page_text))
+        for index, match in enumerate(matches):
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(page_text)
+            block = clean_exam_text(page_text[start:end])
+            if len(block.split()) >= 12:
+                question_number = match.group(1)
+                extracts.append(
+                    {
+                        "label": f"{year} - Page {page} - Question {question_number}",
+                        "text": block,
+                    }
+                )
+
+    if extracts:
+        return extracts[:40]
+
+    for page, page_text in page_blocks:
+        block = clean_exam_text(page_text)
+        words = block.split()
+        for index, start in enumerate(range(0, len(words), 220), start=1):
+            fallback = " ".join(words[start : start + 220]).strip()
+            if fallback:
+                extracts.append(
+                    {
+                        "label": f"{year} - Page {page} - Extract {index}",
+                        "text": fallback,
+                    }
+                )
+    return extracts[:20]
+
+
+def clean_question_with_gemini(subject: str, exam, question: str) -> str:
+    prompt = f"""
+Clean this extracted GCSE/IGCSE past-paper question for a student answer box.
+
+Subject: {subject}
+Paper/component: {exam.component}
+Board: {exam.board} {exam.level}
+
+Rules:
+- Remove page furniture such as "Turn over", "DO NOT WRITE IN THIS AREA", answer lines and candidate instructions.
+- Preserve marks, subparts, numbers, units and formulas.
+- If the question depends on a diagram, graph or table that is not present, add one line at the top: [Diagram/table needed].
+- Do not answer the question.
+
+Extracted text:
+{question}
+"""
+    return run_gemini(prompt)
+
+
+def old_split_past_paper_questions(text: str) -> list[str]:
     pattern = re.compile(
         r"(?im)^\s*(?:question\s+|q\s*)?(\d{1,2})\s*(?:[.)]|[a-z]\)|\s{2,})"
     )
@@ -308,22 +408,32 @@ def feedback_tab(subject: str, exam) -> None:
             paper_names = [doc.name for doc in past_papers]
             selected_paper_name = st.selectbox("Past paper", paper_names)
             selected_paper = past_papers[paper_names.index(selected_paper_name)]
-            paper_questions = split_past_paper_questions(selected_paper.text)
+            paper_questions = split_past_paper_questions(
+                selected_paper.text,
+                selected_paper.name,
+            )
 
             if paper_questions:
-                paper_question_labels = [
-                    f"Extract {index + 1}: {question[:80].replace(chr(10), ' ')}"
-                    for index, question in enumerate(paper_questions)
-                ]
+                paper_question_labels = [question["label"] for question in paper_questions]
                 selected_paper_question = st.selectbox(
-                    "Question/extract",
+                    "Question",
                     paper_question_labels,
                 )
                 paper_question_index = paper_question_labels.index(selected_paper_question)
+                selected_extract = paper_questions[paper_question_index]["text"]
                 with st.container(border=True):
-                    st.write(paper_questions[paper_question_index])
-                if st.button("Use selected past-paper question"):
-                    st.session_state.feedback_question = paper_questions[paper_question_index]
+                    st.write(selected_extract)
+                action_cols = st.columns(2)
+                with action_cols[0]:
+                    if st.button("Use selected past-paper question"):
+                        st.session_state.feedback_question = selected_extract
+                with action_cols[1]:
+                    if st.button("Clean selected question with Gemini"):
+                        st.session_state.feedback_question = clean_question_with_gemini(
+                            subject,
+                            exam,
+                            selected_extract,
+                        )
             else:
                 st.info("No extractable questions were found in this past paper.")
 
