@@ -398,13 +398,19 @@ For each question include:
 def feedback_tab(subject: str, exam) -> None:
     st.subheader("Mark an answer")
 
-    past_papers = [
-        doc
-        for doc in st.session_state.documents
-        if doc.subject == subject and doc.document_type == "Past paper"
-    ]
-    if past_papers:
-        with st.expander("Choose a question from an uploaded past paper"):
+    answer_source = st.radio(
+        "Answer source",
+        ["Uploaded past paper", "Generated practice", "Manual paste"],
+        horizontal=True,
+    )
+
+    if answer_source == "Uploaded past paper":
+        past_papers = [
+            doc
+            for doc in st.session_state.documents
+            if doc.subject == subject and doc.document_type == "Past paper"
+        ]
+        if past_papers:
             paper_names = [doc.name for doc in past_papers]
             selected_paper_name = st.selectbox("Past paper", paper_names)
             selected_paper = past_papers[paper_names.index(selected_paper_name)]
@@ -415,13 +421,10 @@ def feedback_tab(subject: str, exam) -> None:
 
             if paper_questions:
                 paper_question_labels = [question["label"] for question in paper_questions]
-                selected_paper_question = st.selectbox(
-                    "Question",
-                    paper_question_labels,
-                )
+                selected_paper_question = st.selectbox("Question", paper_question_labels)
                 paper_question_index = paper_question_labels.index(selected_paper_question)
                 selected_extract = paper_questions[paper_question_index]["text"]
-                with st.container(border=True):
+                with st.expander("Preview selected past-paper question", expanded=True):
                     st.write(selected_extract)
                 action_cols = st.columns(2)
                 with action_cols[0]:
@@ -436,26 +439,34 @@ def feedback_tab(subject: str, exam) -> None:
                         )
             else:
                 st.info("No extractable questions were found in this past paper.")
+        else:
+            st.info("Upload and index a past paper for this subject first.")
 
-    if st.session_state.latest_practice_questions:
-        question_labels = [
-            f"Question {index + 1}"
-            for index, _ in enumerate(st.session_state.latest_practice_questions)
-        ]
-        selected_question = st.selectbox(
-            "Generated question to answer",
-            question_labels,
-        )
-        selected_index = question_labels.index(selected_question)
-        with st.expander("Preview selected generated question", expanded=True):
-            st.markdown(st.session_state.latest_practice_questions[selected_index])
-        if st.button("Use selected generated question"):
-            st.session_state.feedback_question = st.session_state.latest_practice_questions[
+    elif answer_source == "Generated practice":
+        if st.session_state.latest_practice_questions:
+            question_labels = [
+                f"Question {index + 1}"
+                for index, _ in enumerate(st.session_state.latest_practice_questions)
+            ]
+            selected_question = st.selectbox("Generated question", question_labels)
+            selected_index = question_labels.index(selected_question)
+            selected_generated_question = st.session_state.latest_practice_questions[
                 selected_index
             ]
-    elif st.session_state.latest_practice:
-        if st.button("Use latest generated practice as the question"):
-            st.session_state.feedback_question = st.session_state.latest_practice
+            with st.expander("Preview selected generated question", expanded=True):
+                st.markdown(selected_generated_question)
+            if st.button("Use selected generated question"):
+                st.session_state.feedback_question = selected_generated_question
+        elif st.session_state.latest_practice:
+            with st.expander("Preview latest generated practice", expanded=True):
+                st.markdown(st.session_state.latest_practice)
+            if st.button("Use latest generated practice as the question"):
+                st.session_state.feedback_question = st.session_state.latest_practice
+        else:
+            st.info("Generate practice questions first, then return here.")
+
+    else:
+        st.caption("Paste or type any question below.")
 
     question = st.text_area("Question", height=260, key="feedback_question")
     answer = st.text_area("Maximos's answer", height=220, key="feedback_answer")
