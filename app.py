@@ -155,6 +155,39 @@ def clean_exam_text(text: str) -> str:
     return cleaned.strip()
 
 
+def is_question_like_extract(text: str) -> bool:
+    cleaned = clean_exam_text(text)
+    words = cleaned.split()
+    if len(words) < 18:
+        return False
+
+    title_only_patterns = [
+        r"^\d{4}\s+SUMMER\b",
+        r"^4[A-Z]{2}\d\s*-\s*\d[A-Z]?$",
+        r"^Paper\s+\d",
+        r"^Centre Number",
+        r"^Candidate Number",
+    ]
+    if any(re.search(pattern, cleaned, re.IGNORECASE) for pattern in title_only_patterns):
+        if len(words) < 45:
+            return False
+
+    question_signals = [
+        r"\(\d+\)",  # marks such as (3)
+        r"\bexplain\b",
+        r"\bcalculate\b",
+        r"\bdescribe\b",
+        r"\bstate\b",
+        r"\bdiagram\b",
+        r"\bfigure\b",
+        r"\btable\b",
+        r"\bgraph\b",
+        r"\bshow that\b",
+        r"\bcomplete\b",
+    ]
+    return any(re.search(pattern, cleaned, re.IGNORECASE) for pattern in question_signals)
+
+
 def infer_year_from_filename(filename: str) -> str:
     match = re.search(r"(20\d{2})", filename)
     return match.group(1) if match else "Unknown year"
@@ -186,7 +219,7 @@ def split_past_paper_questions(text: str, filename: str) -> list[dict[str, str]]
             start = match.start()
             end = matches[index + 1].start() if index + 1 < len(matches) else len(page_text)
             block = clean_exam_text(page_text[start:end])
-            if len(block.split()) >= 12:
+            if is_question_like_extract(block):
                 question_number = match.group(1)
                 extracts.append(
                     {
@@ -200,10 +233,12 @@ def split_past_paper_questions(text: str, filename: str) -> list[dict[str, str]]
 
     for page, page_text in page_blocks:
         block = clean_exam_text(page_text)
+        if not is_question_like_extract(block):
+            continue
         words = block.split()
         for index, start in enumerate(range(0, len(words), 220), start=1):
             fallback = " ".join(words[start : start + 220]).strip()
-            if fallback:
+            if is_question_like_extract(fallback):
                 extracts.append(
                     {
                         "label": f"{year} - Page {page} - Extract {index}",
