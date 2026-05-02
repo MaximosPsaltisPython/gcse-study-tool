@@ -62,7 +62,7 @@ def extract_pdf_text(file) -> str:
     for page_number, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
         if text.strip():
-            pages.append(f"[Page {page_number}]\n{text}")
+            pages.append(f"\n[Page {page_number}]\n{text}")
 
     if not pages:
         return (
