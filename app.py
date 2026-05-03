@@ -428,7 +428,7 @@ Continue the same structure until all {count} questions are complete.
                 st.session_state.latest_practice,
             )
             st.download_button(
-                "Download 2-page practice worksheet as PDF",
+                "Download practice worksheet as PDF",
                 data=pdf_bytes,
                 file_name=f"{filename_slug(subject)}-practice-worksheet.pdf",
                 mime="application/pdf",
