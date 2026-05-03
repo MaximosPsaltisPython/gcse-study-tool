@@ -72,19 +72,20 @@ def build_practice_pdf(subject: str, exam_label: str, practice_text: str) -> byt
 
 
 def parse_practice_questions(practice_text: str) -> list[dict[str, str]]:
+    normalized_text = normalize_generated_text(practice_text)
     heading_pattern = re.compile(
-        r"(?im)^\s*(?:#{1,4}\s*)?(?:practice\s+)?(?:question|q)\s*(\d+)\s*[:.)-]?\s*$"
+        r"(?im)^\s*(?:[-–—]{3,}\s*)?(?:#{1,4}\s*)?(?:practice\s+)?(?:question|q)\s*(\d+)\s*[:.)-]?"
     )
-    matches = list(heading_pattern.finditer(practice_text))
+    matches = list(heading_pattern.finditer(normalized_text))
     blocks: list[tuple[str, str]] = []
 
     if matches:
         for index, match in enumerate(matches):
             start = match.end()
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(practice_text)
-            blocks.append((f"Question {match.group(1)}", practice_text[start:end].strip()))
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized_text)
+            blocks.append((f"Question {match.group(1)}", normalized_text[start:end].strip()))
     else:
-        blocks.append(("Question 1", practice_text.strip()))
+        blocks.append(("Question 1", normalized_text.strip()))
 
     parsed = []
     for title, block in blocks:
@@ -119,6 +120,17 @@ def parse_practice_questions(practice_text: str) -> list[dict[str, str]]:
         )
 
     return parsed
+
+
+def normalize_generated_text(text: str) -> str:
+    text = re.sub(r"\r\n?", "\n", text)
+    text = re.sub(r"(?m)^\s*[-–—]{3,}\s*$", "\n", text)
+    text = re.sub(
+        r"(?im)(?<!^)(?=\s*(?:#{1,4}\s*)?(?:practice\s+)?(?:question|q)\s*\d+\s*[:.)-]?)",
+        "\n",
+        text,
+    )
+    return text.strip()
 
 
 def extract_between(block: str, start_labels: list[str], end_labels: list[str]) -> str:
