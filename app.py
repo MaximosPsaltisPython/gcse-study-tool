@@ -11,6 +11,7 @@ from modules.subjects import profile_for
 from services.document_loader import load_uploaded_documents
 from services.docx_export import build_practice_docx
 from services.gemini_client import build_subject_context, generate_with_gemini, get_api_key
+from services.pdf_export import build_practice_pdf
 from services.rag_index import StudyIndex, format_context
 from services.schedule import exams_for_subject, load_exams, subjects_from_exams, upcoming_exams
 
@@ -421,6 +422,20 @@ Continue the same structure until all {count} questions are complete.
     if st.session_state.latest_practice:
         st.markdown(st.session_state.latest_practice)
         try:
+            pdf_bytes = build_practice_pdf(
+                subject,
+                f"{exam.component} | {exam.board} {exam.level} {exam.unit_code}",
+                st.session_state.latest_practice,
+            )
+            st.download_button(
+                "Download 2-page practice worksheet as PDF",
+                data=pdf_bytes,
+                file_name=f"{filename_slug(subject)}-practice-worksheet.pdf",
+                mime="application/pdf",
+            )
+        except RuntimeError as exc:
+            st.warning(str(exc))
+        try:
             docx_bytes = build_practice_docx(
                 subject,
                 f"{exam.component} | {exam.board} {exam.level} {exam.unit_code}",
@@ -434,12 +449,6 @@ Continue the same structure until all {count} questions are complete.
             )
         except RuntimeError as exc:
             st.warning(str(exc))
-        st.download_button(
-            "Download generated practice as Markdown",
-            data=st.session_state.latest_practice,
-            file_name=f"{filename_slug(subject)}-practice.md",
-            mime="text/markdown",
-        )
 
 
 def feedback_tab(subject: str, exam) -> None:

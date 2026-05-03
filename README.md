@@ -10,7 +10,8 @@ Streamlit study assistant for Maximos Rigas Psaltis's GCSE/IGCSE exam programme.
 - Builds a lightweight local search index over uploaded material.
 - Uses retrieved material with Gemini to answer questions, generate practice and mark answers.
 - Lets students choose a question from an uploaded past paper when extractable text is available.
-- Exports generated practice as a DOCX worksheet for printing or editing.
+- Exports generated practice as a PDF worksheet with questions and answer lines first, then model answers and mark schemes after a page break.
+- Exports generated practice as a DOCX worksheet for editing.
 - Logs revision sessions by subject.
 
 ## Subjects covered
