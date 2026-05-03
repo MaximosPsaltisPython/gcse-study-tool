@@ -8,12 +8,13 @@ from pathlib import Path
 import streamlit as st
 
 from modules.subjects import profile_for
-from services.document_loader import load_uploaded_documents
+from services.document_loader import LoadedDocument, load_uploaded_documents
 from services.docx_export import build_practice_docx
 from services.gemini_client import build_subject_context, generate_with_gemini, get_api_key
 from services.pdf_export import build_practice_pdf
 from services.rag_index import StudyIndex, format_context
 from services.schedule import exams_for_subject, load_exams, subjects_from_exams, upcoming_exams
+from services import supabase_store
 
 
 ROOT = Path(__file__).parent
@@ -41,10 +42,36 @@ def init_state() -> None:
     st.session_state.setdefault("latest_practice_questions", [])
     st.session_state.setdefault("feedback_question", "")
     st.session_state.setdefault("feedback_answer", "")
+    st.session_state.setdefault("loaded_subjects", [])
 
 
 def rebuild_index() -> None:
     st.session_state.study_index = StudyIndex.from_documents(st.session_state.documents)
+
+
+def merge_documents(
+    current_documents: list[LoadedDocument],
+    new_documents: list[LoadedDocument],
+) -> list[LoadedDocument]:
+    merged = {
+        (document.subject, document.document_type, document.name): document
+        for document in current_documents
+    }
+    for document in new_documents:
+        merged[(document.subject, document.document_type, document.name)] = document
+    return list(merged.values())
+
+
+def load_saved_subject_documents(subject: str) -> int:
+    saved_documents = supabase_store.load_documents(st, subject)
+    st.session_state.documents = merge_documents(
+        st.session_state.documents,
+        saved_documents,
+    )
+    if subject not in st.session_state.loaded_subjects:
+        st.session_state.loaded_subjects.append(subject)
+    rebuild_index()
+    return len(saved_documents)
 
 
 def current_exam(subject: str):
@@ -344,12 +371,48 @@ def subject_tab(subject: str, exam) -> None:
 
     if st.button("Add to study library", key=f"{subject}-add-docs"):
         new_docs = load_uploaded_documents(uploads, subject=subject, document_type=doc_type)
-        st.session_state.documents.extend(new_docs)
+        st.session_state.documents = merge_documents(st.session_state.documents, new_docs)
         rebuild_index()
-        st.success(f"Added {len(new_docs)} document(s) and rebuilt the index.")
+        if supabase_store.is_configured(st):
+            try:
+                saved_count = supabase_store.save_documents(st, new_docs)
+                st.success(
+                    f"Added {len(new_docs)} document(s), saved {saved_count} to Supabase, and rebuilt the index."
+                )
+            except Exception as exc:
+                st.warning(f"Added locally, but Supabase save failed: {exc}")
+        else:
+            st.success(f"Added {len(new_docs)} document(s) and rebuilt the index.")
 
     subject_docs = [doc for doc in st.session_state.documents if doc.subject == subject]
     st.caption(f"Indexed documents for this subject: {len(subject_docs)}")
+
+    st.markdown("#### Saved library")
+    if supabase_store.is_configured(st):
+        storage_cols = st.columns(3)
+        with storage_cols[0]:
+            if st.button("Load saved materials", key=f"{subject}-load-saved"):
+                try:
+                    loaded_count = load_saved_subject_documents(subject)
+                    st.success(f"Loaded {loaded_count} saved document(s) for {subject}.")
+                except Exception as exc:
+                    st.error(f"Could not load saved materials: {exc}")
+        with storage_cols[1]:
+            if st.button("Save current materials", key=f"{subject}-save-current"):
+                try:
+                    saved_count = supabase_store.save_documents(st, subject_docs)
+                    st.success(f"Saved {saved_count} current document(s) for {subject}.")
+                except Exception as exc:
+                    st.error(f"Could not save current materials: {exc}")
+        with storage_cols[2]:
+            if st.button("Clear local materials", key=f"{subject}-clear-local"):
+                st.session_state.documents = [
+                    doc for doc in st.session_state.documents if doc.subject != subject
+                ]
+                rebuild_index()
+                st.success(f"Cleared local {subject} materials. Supabase was not changed.")
+    else:
+        st.info("Add Supabase secrets to Streamlit to save uploaded materials between redeploys.")
 
 
 def ask_tab(subject: str, exam) -> None:
@@ -618,6 +681,11 @@ def main() -> None:
         exam_labels = selected_exam_options(subject)
         exam_label = st.selectbox("Paper/component", exam_labels)
         exam = selected_exam_from_label(subject, exam_label)
+        if supabase_store.is_configured(st) and subject not in st.session_state.loaded_subjects:
+            try:
+                load_saved_subject_documents(subject)
+            except Exception:
+                pass
         st.divider()
         st.metric("Indexed documents", len(st.session_state.documents))
         st.metric("Index chunks", len(st.session_state.study_index.chunks))
